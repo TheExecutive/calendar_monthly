@@ -1,248 +1,311 @@
 /* Magic Mirror Module: calendar_monthly
- * v1.0 - June 2016
  *
- * By Ashley M. Kirchner <kirash4@gmail.com>
- * Beer Licensed (meaning, if you like this module, feel free to have a beer on me, or send me one.)
+ * Original By Ashley M. Kirchner <kirash4@gmail.com>
+ * Rewritten/modernized to fix month-rollover + scheduling issues.
+ *
+ * Key improvements:
+ * - Always returns DOM (never "returns nothing" on refresh)
+ * - Refresh logic is based on actual month/day change (not “hit an exact midnight window”)
+ * - Uses a simple periodic timer; no fragile moment.diff misuse / undeclared globals
+ * - Optional midnight fade is preserved
  */
 
- Module.register("calendar_monthly", {
+Module.register("calendar_monthly", {
+  // Module defaults
+  defaults: {
+    debugging: false,
 
-	// Module defaults
-	defaults: {
-		debugging:		false,
-		initialLoadDelay:	0,		// How many seconds to wait on a fresh start up.
-							// This is to prevent collision with all other modules also
-							// loading all at the same time. This only happens once,
-							// when the mirror first starts up.
-		fadeSpeed:		2,		// How fast (in seconds) to fade out and in during a midnight refresh
-		showHeader:		true,		// Show the month and year at the top of the calendar
-		cssStyle:		"block",	// which CSS style to use, 'block', 'slate', or 'custom'
-		updateDelay:		5,		// How many seconds after midnight before a refresh
-							// This is to prevent collision with other modules refreshing
-							// at the same time.
-	},
+    // How many seconds to wait on a fresh start up. Only happens once at MM boot.
+    initialLoadDelay: 0,
 
-	// Required styles
-	getStyles: function() {
-		return [this.data.path + "/css/mcal.css", this.getThemeCss()];
-	},
+    // Fade time (in seconds) when the calendar rebuilds at/after midnight
+    fadeSpeed: 2,
 
-	getThemeCss: function() {
-		return this.data.path + "/css/themes/" + this.config.cssStyle + ".css";
-	},
+    // Show the month and year at the top of the calendar
+    showHeader: true,
 
-	// Required scripts
-	getScripts: function() {
-		return ["moment.js"];
-	},
+    // Which CSS theme to use: 'block', 'slate', or 'custom'
+    cssStyle: "block",
 
-	// Override start method
-	start: function() {
-		Log.log("Starting module: " + this.name);
-		// Set locale
-		moment.locale(config.language);
-		
-		// Calculate next midnight and add updateDelay
-		var now = moment();
-		this.midnight = moment([now.year(), now.month(), now.date() + 1]).add(this.config.updateDelay, "seconds");
+    // Seconds after midnight before considering it "safe" to do the date rollover refresh
+    // (helps avoid the midnight stampede of other modules)
+    updateDelay: 5,
 
-		this.loaded = false;
+    // How often to check if we need to refresh the calendar (ms)
+    // 60s is plenty; we refresh immediately if the day/month changes.
+    checkInterval: 60 * 1000
+  },
 
-		this.scheduleUpdate(this.config.initialLoadDelay * 1000);
-	},
+  getStyles: function () {
+    return [this.data.path + "/css/mcal.css", this.getThemeCss()];
+  },
 
-	// Override dom generator
-	getDom: function() {
+  getThemeCss: function () {
+    return this.data.path + "/css/themes/" + this.config.cssStyle + ".css";
+  },
 
-		if ((moment() > this.midnight) || (!this.loaded)) {
+  getScripts: function () {
+    return ["moment.js"];
+  },
 
-			var month = moment().month();
-			var year = moment().year();
-			var monthName = moment().format("MMMM");
-			var monthLength = moment().daysInMonth();
+  start: function () {
+    Log.log("Starting module: " + this.name);
 
-			// Find first day of the month, LOCALE aware
-			var startingDay = moment().date(1).weekday();
+    // Locale: prefer global MagicMirror config language if present
+    // (your config uses `language: "en"`)
+    try {
+      moment.locale(config && config.language ? config.language : "en");
+    } catch (e) {
+      moment.locale("en");
+    }
 
-			var wrapper = document.createElement("table");
-			wrapper.className = 'xsmall';
-			wrapper.id = 'calendar-table';
+    this.loaded = false;
+    this._timer = null;
 
-			// Create THEAD section with month name and 4-digit year
-			var header = document.createElement("tHead");
-			var headerTR = document.createElement("tr");
+    // Track what we last rendered so we can refresh only when needed
+    this._lastRenderKey = null; // e.g., "2026-02"
+    this._lastDayKey = null;    // e.g., "2026-02-02"
 
-			// We only fill in the THEAD section if the .showHeader config is set to true
-			if (this.config.showHeader) {
-				var headerTH = document.createElement("th");
-				headerTH.colSpan = "7";
-				headerTH.scope = "col";
-				headerTH.id = "calendar-th";
-				var headerMonthSpan = document.createElement("span");
-				headerMonthSpan.id = "monthName";
-				headerMonthSpan.innerHTML = monthName;
-				var headerYearSpan = document.createElement("span");
-				headerYearSpan.id = "yearDigits";
-				headerYearSpan.innerHTML = year;
-				// Add space between the two elements
-				// This can be used later with the :before or :after options in the CSS
-				var headerSpace = document.createTextNode(" ");
+    // Compute the next "safe" rollover moment (midnight + updateDelay)
+    this._nextRolloverAt = this._computeNextRolloverMoment();
 
-				headerTH.appendChild(headerMonthSpan);
-				headerTH.appendChild(headerSpace);
-				headerTH.appendChild(headerYearSpan);
-				headerTR.appendChild(headerTH);
-			}
-			header.appendChild(headerTR);
-			wrapper.appendChild(header);
+    // Kick initial render after initialLoadDelay
+    const delayMs = Math.max(0, Number(this.config.initialLoadDelay) || 0) * 1000;
+    setTimeout(() => {
+      this.loaded = true;
+      this.updateDom(0);
+      this._startScheduler();
+    }, delayMs);
+  },
 
-			// Create TFOOT section -- currently used for debugging only
-			var footer = document.createElement('tFoot');
-			var footerTR = document.createElement("tr");
-			footerTR.id = "calendar-tf";
+  // Always return a DOM. We rebuild the calendar each time getDom is called,
+  // but we only *trigger* getDom (via updateDom) when the day/month changes.
+  getDom: function () {
+    const now = moment();
+    const month = now.month(); // 0-11
+    const year = now.year();
+    const monthName = now.format("MMMM");
+    const monthLength = now.daysInMonth();
 
-			var footerTD = document.createElement("td");
-			footerTD.colSpan ="7";
-			footerTD.className = "footer";
-			if (this.config.debugging) {
-				footerTD.innerHTML = "Calendar currently in DEBUG mode!<br />Please see console log.";
-			} else {
-				footerTD.innerHTML = "&nbsp;";
-			}
+    // Find first day of the month, LOCALE aware
+    const startingDay = moment().date(1).weekday();
 
-			footerTR.appendChild(footerTD);
-			footer.appendChild(footerTR);
-			wrapper.appendChild(footer);
+    const wrapper = document.createElement("table");
+    wrapper.className = "xsmall";
+    wrapper.id = "calendar-table";
 
-			// Create TBODY section with day names
-			var bodyContent = document.createElement("tBody");
-			var bodyTR = document.createElement("tr");
-			bodyTR.id = "calendar-header";
+    // THEAD with month name and year
+    const header = document.createElement("tHead");
+    const headerTR = document.createElement("tr");
 
-			for (var i = 0; i <= 6; i++ ){
-				var bodyTD = document.createElement("td");
-				bodyTD.className = "calendar-header-day";
-				bodyTD.innerHTML = moment().weekday(i).format("ddd");
-				bodyTR.appendChild(bodyTD);
-			}
-			bodyContent.appendChild(bodyTR);
-			wrapper.appendChild(bodyContent);
+    if (this.config.showHeader) {
+      const headerTH = document.createElement("th");
+      headerTH.colSpan = "7";
+      headerTH.scope = "col";
+      headerTH.id = "calendar-th";
 
-			// Create TBODY section with the monthly calendar
-			var bodyContent = document.createElement("tBody");
-			var bodyTR = document.createElement("tr");
-			bodyTR.className = "weekRow";
+      const headerMonthSpan = document.createElement("span");
+      headerMonthSpan.id = "monthName";
+      headerMonthSpan.innerHTML = monthName;
 
-			// Fill in the days
-			var day = 1;
-			var nextMonth = 1;
-			// Loop for amount of weeks (as rows)
-			for (var i = 0; i < 9; i++) {
-				// Loop for each weekday (as individual cells)
-				for (var j = 0; j <= 6; j++) {
-					var bodyTD = document.createElement("td");
-					bodyTD.className = "calendar-day";
-					var squareDiv = document.createElement("div");
-					squareDiv.className = "square-box";
-					var squareContent = document.createElement("div");
-					squareContent.className = "square-content";
-					var squareContentInner = document.createElement("div");
-					var innerSpan = document.createElement("span");
+      const headerYearSpan = document.createElement("span");
+      headerYearSpan.id = "yearDigits";
+      headerYearSpan.innerHTML = year;
 
-					if (j < startingDay && i == 0) {
-						// First row, fill in empty slots
-						innerSpan.className = "monthPrev";
-						innerSpan.innerHTML = moment().subtract(1, 'months').endOf('month').subtract((startingDay - 1) - j, 'days').date();
-					} else if (day <= monthLength && (i > 0 || j >= startingDay)) {
-						if (day == moment().date()) {
-							innerSpan.id = "day" + day;
-							innerSpan.className = "today";
-						} else {
-							innerSpan.id = "day" + day;
-							innerSpan.className = "daily";
-						}
-						innerSpan.innerHTML = day;
-						day++;
-					} else if (day > monthLength && i > 0) {
-						// Last row, fill in empty space
-						innerSpan.className = "monthNext";
-						innerSpan.innerHTML = moment([year, month, monthLength]).add(nextMonth, 'days').date();
-						nextMonth++;
-					}
-					squareContentInner.appendChild(innerSpan);
-					squareContent.appendChild(squareContentInner);
-					squareDiv.appendChild(squareContent);
-					bodyTD.appendChild(squareDiv);	
-					bodyTR.appendChild(bodyTD);
-				}
-				// Don't need any more rows if we've run out of days
-				if (day > monthLength) {
-					break;
-				} else {
-					bodyTR.appendChild(bodyTD);
-					bodyContent.appendChild(bodyTR);
-					var bodyTR = document.createElement("tr");
-					bodyTR.className = "weekRow";
-				}
-			}	
+      headerTH.appendChild(headerMonthSpan);
+      headerTH.appendChild(document.createTextNode(" "));
+      headerTH.appendChild(headerYearSpan);
+      headerTR.appendChild(headerTH);
+    }
 
-			bodyContent.appendChild(bodyTR);
-			wrapper.appendChild(bodyContent);
+    header.appendChild(headerTR);
+    wrapper.appendChild(header);
 
-			this.loaded = true;
-			return wrapper;
+    // TFOOT (debugging)
+    const footer = document.createElement("tFoot");
+    const footerTR = document.createElement("tr");
+    footerTR.id = "calendar-tf";
 
-		}
+    const footerTD = document.createElement("td");
+    footerTD.colSpan = "7";
+    footerTD.className = "footer";
+    footerTD.innerHTML = this.config.debugging
+      ? "Calendar currently in DEBUG mode!<br />Please see console log."
+      : "&nbsp;";
 
-	},
+    footerTR.appendChild(footerTD);
+    footer.appendChild(footerTR);
+    wrapper.appendChild(footer);
 
-	scheduleUpdate: function(delay) {
-		if (this.config.debugging) {
-			Log.log("= = = = = = = = = = = = = = = = = = = = = = = = = = = = = =");
-			Log.log("CALENDAR_MONTHLY IS IN DEBUG MODE!");
-			Log.log("Remove 'debugging' option from config/config.js to disable.");
-			Log.log("             Current moment(): " + moment() + " (" + moment().format("hh:mm:ss a") + ")");
-			Log.log("scheduleUpdate() delay set at: " + delay);
-		}
+    // TBODY: day names
+    const headerBody = document.createElement("tBody");
+    const headerRow = document.createElement("tr");
+    headerRow.id = "calendar-header";
 
-		if (typeof delay !== "undefined" && delay >= 0) {
-			nextReload = delay;
-		}
+    for (let i = 0; i <= 6; i++) {
+      const td = document.createElement("td");
+      td.className = "calendar-header-day";
+      td.innerHTML = moment().weekday(i).format("ddd");
+      headerRow.appendChild(td);
+    }
+    headerBody.appendChild(headerRow);
+    wrapper.appendChild(headerBody);
 
-		if (delay > 0) {
-			// Calculate the time DIFFERENCE to that next reload!
-			nextReload = moment.duration(nextReload.diff(moment(), "milliseconds"));
-			if (this.config.debugging) {
-				var hours = Math.floor(nextReload.asHours());
-				var  mins = Math.floor(nextReload.asMinutes()) - hours * 60;
-				var  secs = Math.floor(nextReload.asSeconds()) - ((hours * 3600 ) + (mins * 60));
-				Log.log("  nextReload should happen at: " + delay + " (" + moment(delay).format("hh:mm:ss a") + ")");
-				Log.log("                  which is in: " + mins + " minutes and " + secs + " seconds.");
-				Log.log("              midnight set at: " + this.midnight + " (" + moment(this.midnight).format("hh:mm:ss a") + ")");
-				Log.log("= = = = = = = = = = = = = = = = = = = = = = = = = = = = = =");
-			}
-		}
+    // TBODY: month grid
+    const bodyContent = document.createElement("tBody");
 
-		var self = this;
-		setTimeout(function() {
-			self.reloadDom();
-		}, nextReload);
+    let day = 1;
+    let nextMonthDay = 1;
 
-	},
+    // Up to 6 weeks is enough for any month view, but we can keep 6 to be safe
+    for (let week = 0; week < 6; week++) {
+      const row = document.createElement("tr");
+      row.className = "weekRow";
 
-	reloadDom: function() {
-		if (this.config.debugging) {
-			Log.log("          Calling reloadDom()!");
-		}
+      for (let dow = 0; dow <= 6; dow++) {
+        const cell = document.createElement("td");
+        cell.className = "calendar-day";
 
-		var now = moment();
-		if (now > this.midnight) {
-			this.updateDom(this.config.fadeSpeed * 1000);
-			this.midnight = moment([now.year(), now.month(), now.date() + 1]).add(this.config.updateDelay, "seconds");
-		}
+        const squareDiv = document.createElement("div");
+        squareDiv.className = "square-box";
 
-		var nextRefresh = moment([now.year(), now.month(), now.date(), now.hour() + 1]);
-		this.scheduleUpdate(nextRefresh);
-	}
+        const squareContent = document.createElement("div");
+        squareContent.className = "square-content";
 
+        const squareContentInner = document.createElement("div");
+        const innerSpan = document.createElement("span");
+
+        // Before month starts: previous month tail
+        if (dow < startingDay && week === 0) {
+          innerSpan.className = "monthPrev";
+          innerSpan.innerHTML = moment()
+            .subtract(1, "months")
+            .endOf("month")
+            .subtract((startingDay - 1) - dow, "days")
+            .date();
+        }
+        // During month
+        else if (day <= monthLength && (week > 0 || dow >= startingDay)) {
+          innerSpan.id = "day" + day;
+          innerSpan.className = day === now.date() ? "today" : "daily";
+          innerSpan.innerHTML = day;
+          day++;
+        }
+        // After month ends: next month lead
+        else {
+          innerSpan.className = "monthNext";
+          innerSpan.innerHTML = moment([year, month, monthLength])
+            .add(nextMonthDay, "days")
+            .date();
+          nextMonthDay++;
+        }
+
+        squareContentInner.appendChild(innerSpan);
+        squareContent.appendChild(squareContentInner);
+        squareDiv.appendChild(squareContent);
+        cell.appendChild(squareDiv);
+        row.appendChild(cell);
+      }
+
+      bodyContent.appendChild(row);
+
+      // Stop early if we finished the month and the last row was fully filled
+      if (day > monthLength && week >= 3) break;
+    }
+
+    wrapper.appendChild(bodyContent);
+
+    // Mark rendered keys
+    this._lastRenderKey = now.format("YYYY-MM");
+    this._lastDayKey = now.format("YYYY-MM-DD");
+
+    return wrapper;
+  },
+
+  /* ------------------------- Scheduler ------------------------- */
+
+  _startScheduler: function () {
+    if (this._timer) clearInterval(this._timer);
+
+    // Run immediately once so we never "wait a whole minute"
+    this._tick();
+
+    this._timer = setInterval(() => {
+      this._tick();
+    }, Math.max(5 * 1000, Number(this.config.checkInterval) || 60 * 1000));
+  },
+
+  _tick: function () {
+    const now = moment();
+
+    // Decide whether we should refresh:
+    // 1) if day changed (covers midnight rollovers reliably)
+    // 2) if month changed (covers long sleeps / missed ticks)
+    // 3) if we've passed the scheduled rollover moment (midnight + updateDelay)
+    const dayKey = now.format("YYYY-MM-DD");
+    const monthKey = now.format("YYYY-MM");
+
+    const dayChanged = this._lastDayKey && dayKey !== this._lastDayKey;
+    const monthChanged = this._lastRenderKey && monthKey !== this._lastRenderKey;
+    const pastRollover = this._nextRolloverAt && now.isAfter(this._nextRolloverAt);
+
+    if (this.config.debugging) {
+      Log.log(`[calendar_monthly] tick @ ${now.format("YYYY-MM-DD HH:mm:ss")}`);
+      Log.log(`[calendar_monthly] lastDay=${this._lastDayKey} lastMonth=${this._lastRenderKey}`);
+      Log.log(
+        `[calendar_monthly] dayChanged=${dayChanged} monthChanged=${monthChanged} pastRollover=${pastRollover} nextRolloverAt=${this._nextRolloverAt ? this._nextRolloverAt.format() : "n/a"}`
+      );
+    }
+
+    // If we haven't rendered yet, render now.
+    if (!this._lastRenderKey || !this._lastDayKey) {
+      this.updateDom(0);
+      this._nextRolloverAt = this._computeNextRolloverMoment();
+      return;
+    }
+
+    // Refresh rules:
+    // - If the month changed, refresh immediately (no need to wait for updateDelay)
+    // - If only the day changed, wait until after (midnight + updateDelay) to refresh (optional)
+    //   BUT if we're already past rollover, refresh now.
+    if (monthChanged) {
+      this.updateDom(0);
+      this._nextRolloverAt = this._computeNextRolloverMoment();
+      return;
+    }
+
+    if (dayChanged) {
+      // We may be after midnight but before updateDelay; wait until rollover moment
+      if (pastRollover) {
+        this.updateDom(this.config.fadeSpeed * 1000);
+        this._nextRolloverAt = this._computeNextRolloverMoment();
+      }
+      return;
+    }
+
+    // Normal case: once we're past the rollover moment, do a refresh
+    // (handles scenarios where MM was busy at midnight exactly)
+    if (pastRollover) {
+      this.updateDom(this.config.fadeSpeed * 1000);
+      this._nextRolloverAt = this._computeNextRolloverMoment();
+    }
+  },
+
+  _computeNextRolloverMoment: function () {
+    const now = moment();
+    // Tomorrow at 00:00 + updateDelay seconds
+    return moment([now.year(), now.month(), now.date() + 1])
+      .add(Number(this.config.updateDelay) || 0, "seconds");
+  },
+
+  suspend: function () {
+    // Stop timers when MM suspends (optional, but clean)
+    if (this._timer) clearInterval(this._timer);
+    this._timer = null;
+  },
+
+  resume: function () {
+    // Restart scheduler on resume
+    if (!this._timer) this._startScheduler();
+  }
 });
