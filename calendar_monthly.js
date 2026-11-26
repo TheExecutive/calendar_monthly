@@ -33,7 +33,13 @@ Module.register("calendar_monthly", {
 
     // How often to check if we need to refresh the calendar (ms)
     // 60s is plenty; we refresh immediately if the day/month changes.
-    checkInterval: 60 * 1000
+    checkInterval: 60 * 1000,
+
+    // Colored dots under days with money coming in or one-off events (needs a calendar
+    // module that broadcasts CALENDAR_EVENTS, e.g. MMM-GoogleCalendar with broadcastEvents).
+    showEventDots: true,
+    alwaysMarkKeywords: "aaliyah|rent due|payday|paycheck", // marked even when repeating
+    maxDots: 3 // colors remembered per day; the first one colors the number
   },
 
   getStyles: function () {
@@ -45,7 +51,7 @@ Module.register("calendar_monthly", {
   },
 
   getScripts: function () {
-    return ["moment.js"];
+    return ["moment.js", this.file("marks.js")];
   },
 
   start: function () {
@@ -61,6 +67,8 @@ Module.register("calendar_monthly", {
 
     this.loaded = false;
     this._timer = null;
+    this.events = [];
+    this._marksKey = "";
 
     // Track what we last rendered so we can refresh only when needed
     this._lastRenderKey = null; // e.g., "2026-02"
@@ -80,8 +88,24 @@ Module.register("calendar_monthly", {
 
   // Always return a DOM. We rebuild the calendar each time getDom is called,
   // but we only *trigger* getDom (via updateDom) when the day/month changes.
+  notificationReceived: function (notification, payload) {
+    if (notification !== "CALENDAR_EVENTS" || !Array.isArray(payload) || !this.config.showEventDots) return;
+    this.events = payload;
+    const now = moment();
+    const key = JSON.stringify(MonthMarks.marks(payload, now.year(), now.month(), this._markOptions()));
+    if (key !== this._marksKey && this.loaded) {
+      this._marksKey = key;
+      this.updateDom(0);
+    }
+  },
+
+  _markOptions: function () {
+    return { alwaysKeywords: this.config.alwaysMarkKeywords, maxDots: this.config.maxDots };
+  },
+
   getDom: function () {
     const now = moment();
+    const dayMarks = this.config.showEventDots ? MonthMarks.marks(this.events, now.year(), now.month(), this._markOptions()) : {};
     const month = now.month(); // 0-11
     const year = now.year();
     const monthName = now.format("MMMM");
@@ -189,6 +213,11 @@ Module.register("calendar_monthly", {
           innerSpan.id = "day" + day;
           innerSpan.className = day === now.date() ? "today" : "daily";
           innerSpan.innerHTML = day;
+          if (dayMarks[day]) {
+            // The day's most important color: money in first, then the earliest one-off event.
+            innerSpan.classList.add("marked");
+            innerSpan.style.setProperty("--mark-color", dayMarks[day][0]);
+          }
           day++;
         }
         // After month ends: next month lead

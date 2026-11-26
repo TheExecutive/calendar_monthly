@@ -47,3 +47,8 @@
 	font-size: 0.9em;
 	line-height: 1.2em;
 }
+
+/* Days with money coming in or one-off events: the number takes that event's color */
+.square-content span.marked { color: var(--mark-color); font-weight: 700; }
+/* Today keeps its light box; the color shows as a thick bottom edge */
+.square-content span.today.marked { color: #333333; box-shadow: inset 0 -3px 0 var(--mark-color); }
