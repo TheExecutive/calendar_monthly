@@ -46,3 +46,18 @@ test("events outrank holidays; money outranks both; holiday color fallback", () 
   assert.deepEqual(m[27], ["#8fb8ff", "#ff8a80"]);
   assert.deepEqual(m[26], ["#5ee8a6", "#ff8a80"]);
 });
+test("work calendar marks only long, after-hours or notable all-day items", () => {
+  const rules = { Work: { minMinutes: 90, workHours: [9, 17], allDayKeywords: "ooo|out of office|pto|vacation|holiday|closed|offsite|training|deadline" } };
+  const w = (title, start, end, fullDayEvent = false) => ({ title, calendarName: "Work", startDate: start, endDate: end, fullDayEvent, color: "#b5e86b" });
+  const ev = [
+    w("Quick sync", day(2, 10), day(2, 10) + 30 * 60e3),
+    w("Planning workshop", day(3, 13), day(3, 13) + 120 * 60e3),
+    w("Late call", day(4, 18), day(4, 18) + 30 * 60e3),
+    w("Remote", day(5, 0), day(6, 0), true),
+    w("PTO", day(9, 0), day(10, 0), true),
+    { title: "Dentist", startDate: day(2, 15), color: "#8fb8ff" },
+  ];
+  const m = M.marks(ev, 2026, 10, { ...opts, calendarRules: rules });
+  assert.deepEqual(Object.keys(m).map(Number), [2, 3, 4, 9]);
+  assert.deepEqual(m[2], ["#8fb8ff"]);
+});

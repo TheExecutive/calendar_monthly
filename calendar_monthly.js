@@ -41,7 +41,10 @@ Module.register("calendar_monthly", {
     alwaysMarkKeywords: "aaliyah|rent due|payday|paycheck", // marked even when repeating
     maxDots: 3, // colors remembered per day: the first colors the number, the second underlines it
     holidayCalendars: ["Holidays"], // calendar names (from the calendar module) whose events are holidays
-    holidayColor: "#ff8a80"
+    holidayColor: "#ff8a80",
+    // Busy calendars can be limited to notable items, by calendar name, e.g.
+    // { Work: { minMinutes: 90, workHours: [9, 17], allDayKeywords: "pto|holiday|offsite" } }
+    calendarRules: {}
   },
 
   getStyles: function () {
@@ -102,7 +105,7 @@ Module.register("calendar_monthly", {
   },
 
   _markOptions: function () {
-    return { alwaysKeywords: this.config.alwaysMarkKeywords, maxDots: this.config.maxDots, holidayCalendars: this.config.holidayCalendars, holidayColor: this.config.holidayColor };
+    return { alwaysKeywords: this.config.alwaysMarkKeywords, maxDots: this.config.maxDots, holidayCalendars: this.config.holidayCalendars, holidayColor: this.config.holidayColor, calendarRules: this.config.calendarRules };
   },
 
   getDom: function () {
