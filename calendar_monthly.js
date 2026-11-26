@@ -42,8 +42,10 @@ Module.register("calendar_monthly", {
     maxDots: 3, // colors remembered per day: the first colors the number, the second underlines it
     holidayCalendars: ["Holidays"], // calendar names (from the calendar module) whose events are holidays
     holidayColor: "#ff8a80",
-    // Busy calendars can be limited to notable items, by calendar name, e.g.
-    // { Work: { minMinutes: 90, workHours: [9, 17], allDayKeywords: "pto|holiday|offsite" } }
+    moneyColor: "#5ee8a6",   // money coming in, whichever calendar it is on
+    // Busy calendars can be limited, by calendar name, e.g.
+    // { Work: { allDay: false, excludeKeywords: "ooo|out of office|pto" } }
+    // (also minMinutes / workHours: [9, 17] to keep only long or out-of-hours meetings)
     calendarRules: {}
   },
 
@@ -105,7 +107,7 @@ Module.register("calendar_monthly", {
   },
 
   _markOptions: function () {
-    return { alwaysKeywords: this.config.alwaysMarkKeywords, maxDots: this.config.maxDots, holidayCalendars: this.config.holidayCalendars, holidayColor: this.config.holidayColor, calendarRules: this.config.calendarRules };
+    return { alwaysKeywords: this.config.alwaysMarkKeywords, maxDots: this.config.maxDots, holidayCalendars: this.config.holidayCalendars, holidayColor: this.config.holidayColor, moneyColor: this.config.moneyColor, calendarRules: this.config.calendarRules };
   },
 
   getDom: function () {

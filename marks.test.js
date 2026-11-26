@@ -46,18 +46,24 @@ test("events outrank holidays; money outranks both; holiday color fallback", () 
   assert.deepEqual(m[27], ["#8fb8ff", "#ff8a80"]);
   assert.deepEqual(m[26], ["#5ee8a6", "#ff8a80"]);
 });
-test("work calendar marks only long, after-hours or notable all-day items", () => {
-  const rules = { Work: { minMinutes: 90, workHours: [9, 17], allDayKeywords: "ooo|out of office|pto|vacation|holiday|closed|offsite|training|deadline" } };
-  const w = (title, start, end, fullDayEvent = false) => ({ title, calendarName: "Work", startDate: start, endDate: end, fullDayEvent, color: "#b5e86b" });
+test("work calendar: one-off meetings only; no all-day items or time off", () => {
+  const rules = { Work: { allDay: false, excludeKeywords: "\\b(ooo|out|out of office|pto|vacation|sick)\\b" } };
+  const w = (title, start, end, fullDayEvent = false, extra = {}) => ({ title, calendarName: "Work", startDate: start, endDate: end, fullDayEvent, color: "#b5e86b", ...extra });
   const ev = [
     w("Quick sync", day(2, 10), day(2, 10) + 30 * 60e3),
-    w("Planning workshop", day(3, 13), day(3, 13) + 120 * 60e3),
-    w("Late call", day(4, 18), day(4, 18) + 30 * 60e3),
-    w("Remote", day(5, 0), day(6, 0), true),
-    w("PTO", day(9, 0), day(10, 0), true),
+    w("Big planning meeting", day(3, 13), day(3, 15)),
+    w("IS Team Standup", day(4, 9), day(4, 9) + 15 * 60e3, false, { recurringEventId: "s" }),
+    w("Out", day(5, 0), day(7, 0), true),
+    w("OOO - Sam", day(9, 0), day(10, 0), true),
+    w("out", day(12, 9), day(12, 10)),
     { title: "Dentist", startDate: day(2, 15), color: "#8fb8ff" },
   ];
   const m = M.marks(ev, 2026, 10, { ...opts, calendarRules: rules });
-  assert.deepEqual(Object.keys(m).map(Number), [2, 3, 4, 9]);
-  assert.deepEqual(m[2], ["#8fb8ff"]);
+  assert.deepEqual(Object.keys(m).map(Number), [2, 3]);
+  assert.deepEqual(m[2], ["#b5e86b", "#8fb8ff"]);
+});
+test("money in always uses the money color, whatever calendar it is on", () => {
+  const m = M.marks([{ title: "Payday", calendarName: "Work", recurringEventId: "p", startDate: day(13, 0), endDate: day(14, 0), fullDayEvent: true, color: "#b5e86b" }],
+    2026, 10, { ...opts, moneyColor: "#5ee8a6", calendarRules: { Work: { allDay: false } } });
+  assert.deepEqual(m[13], ["#5ee8a6"]);
 });
