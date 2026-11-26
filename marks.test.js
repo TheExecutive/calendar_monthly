@@ -35,3 +35,14 @@ test("money in comes first so it wins the day's color", () => {
   ], 2026, 10, opts);
   assert.deepEqual(m[30], ["#5ee8a6", "#8fb8ff"]);
 });
+test("events outrank holidays; money outranks both; holiday color fallback", () => {
+  const o = { ...opts, holidayCalendars: ["Holidays"], holidayColor: "#ff8a80" };
+  const m = M.marks([
+    { title: "Black Friday", calendarName: "Holidays", startDate: day(27, 0), endDate: day(28, 0), fullDayEvent: true, color: "#ff8a80" },
+    { title: "Creed Event", startDate: day(27, 17), color: "#8fb8ff" },
+    { title: "Thanksgiving Day", calendarName: "Holidays", startDate: day(26, 0), endDate: day(27, 0), fullDayEvent: true },
+    { title: "Payday", recurringEventId: "p", startDate: day(26, 9), color: "#5ee8a6" },
+  ], 2026, 10, o);
+  assert.deepEqual(m[27], ["#8fb8ff", "#ff8a80"]);
+  assert.deepEqual(m[26], ["#5ee8a6", "#ff8a80"]);
+});

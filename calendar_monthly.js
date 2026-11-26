@@ -39,7 +39,9 @@ Module.register("calendar_monthly", {
     // module that broadcasts CALENDAR_EVENTS, e.g. MMM-GoogleCalendar with broadcastEvents).
     showEventDots: true,
     alwaysMarkKeywords: "aaliyah|rent due|payday|paycheck", // marked even when repeating
-    maxDots: 3 // colors remembered per day; the first one colors the number
+    maxDots: 3, // colors remembered per day: the first colors the number, the second underlines it
+    holidayCalendars: ["Holidays"], // calendar names (from the calendar module) whose events are holidays
+    holidayColor: "#ff8a80"
   },
 
   getStyles: function () {
@@ -100,7 +102,7 @@ Module.register("calendar_monthly", {
   },
 
   _markOptions: function () {
-    return { alwaysKeywords: this.config.alwaysMarkKeywords, maxDots: this.config.maxDots };
+    return { alwaysKeywords: this.config.alwaysMarkKeywords, maxDots: this.config.maxDots, holidayCalendars: this.config.holidayCalendars, holidayColor: this.config.holidayColor };
   },
 
   getDom: function () {
@@ -217,6 +219,11 @@ Module.register("calendar_monthly", {
             // The day's most important color: money in first, then the earliest one-off event.
             innerSpan.classList.add("marked");
             innerSpan.style.setProperty("--mark-color", dayMarks[day][0]);
+            if (dayMarks[day][1]) {
+              // A second important thing that day (e.g. an outing on a holiday): underline in its color.
+              innerSpan.classList.add("marked-2");
+              innerSpan.style.setProperty("--mark-2", dayMarks[day][1]);
+            }
           }
           day++;
         }

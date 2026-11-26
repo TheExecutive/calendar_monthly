@@ -52,3 +52,5 @@
 .square-content span.marked { color: var(--mark-color); font-weight: 700; }
 /* Today keeps its light box; the color shows as a thick bottom edge */
 .square-content span.today.marked { color: #333333; box-shadow: inset 0 -3px 0 var(--mark-color); }
+/* A second important thing that day: underline in its color (e.g. a holiday under an event) */
+.square-content span.marked-2 { text-decoration: underline; text-decoration-color: var(--mark-2); text-decoration-thickness: 3px; text-underline-offset: 3px; text-decoration-skip-ink: none; }

@@ -1,27 +1,29 @@
-/* Which days of the month get a colored dot: money in (by keyword) and one-off events.
-   Repeating events (workouts, standups, bills, trash, meds) stay unmarked. */
+/* Which days of the month get color: money in (by keyword), one-off events and holidays.
+   Repeating events (workouts, standups, bills, trash, meds) stay unmarked.
+   Each day's colors are ordered money in > one-off events > holidays, then by time. */
 (function (root) {
-  function marks(events, year, month, { alwaysKeywords = "", maxDots = 3 } = {}) {
+  function marks(events, year, month, { alwaysKeywords = "", maxDots = 3, holidayCalendars = ["Holidays"], holidayColor = "#ff8a80" } = {}) {
     const always = alwaysKeywords ? new RegExp(alwaysKeywords, "i") : null;
-    const out = {};
-    const add = (d, color, first) => {
-      const list = (out[d] = out[d] || []);
-      if (list.includes(color)) return;
-      if (first) list.unshift(color); else if (list.length < maxDots) list.push(color);
-      list.length = Math.min(list.length, maxDots);
-    };
-    const sorted = [...(events || [])].sort((a, b) => +a.startDate - +b.startDate);
-    for (const e of sorted) {
-      const recurring = !!(e.recurringEventId || e.recurringEvent);
+    const holidays = holidayCalendars.map(s => String(s).toLowerCase());
+    const found = {};
+    for (const e of events || []) {
       const moneyIn = !!(always && always.test(e.title || ""));
-      if (recurring && !moneyIn) continue;
-      const color = e.color || "#ffffff";
+      const holiday = holidays.includes(String(e.calendarName || "").toLowerCase());
+      if ((e.recurringEventId || e.recurringEvent) && !moneyIn && !holiday) continue;
+      const rank = moneyIn ? 0 : holiday ? 2 : 1;
+      const color = e.color || (holiday ? holidayColor : "#ffffff");
       const start = new Date(+e.startDate);
       // All-day events end at midnight of the day after their last day.
       const last = e.fullDayEvent && e.endDate ? new Date(+e.endDate - 1) : start;
       for (let d = new Date(start.getFullYear(), start.getMonth(), start.getDate()); d <= last; d.setDate(d.getDate() + 1)) {
-        if (d.getFullYear() === year && d.getMonth() === month) add(d.getDate(), color, moneyIn);
+        if (d.getFullYear() === year && d.getMonth() === month) (found[d.getDate()] = found[d.getDate()] || []).push({ rank, at: +e.startDate, color });
       }
+    }
+    const out = {};
+    for (const [d, list] of Object.entries(found)) {
+      const colors = [];
+      for (const x of list.sort((a, b) => a.rank - b.rank || a.at - b.at)) if (!colors.includes(x.color)) colors.push(x.color);
+      out[d] = colors.slice(0, maxDots);
     }
     return out;
   }
